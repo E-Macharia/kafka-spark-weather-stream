@@ -1,0 +1,83 @@
+#version: '3.8'
+
+services:
+  # 1. Apache Kafka Broker (KRaft Mode - Dual Listeners)
+  kafka:
+    image: apache/kafka:4.3.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Bind to internal Docker listener (29092), external host listener (9092), and controller (9093)
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+
+  # 2. PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: weather_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      # Mount initialization script to automatically create tables on startup
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # 3. Weather Simulation Producer (Python)
+  producer:
+    build:
+      context: .
+      dockerfile: producers/Dockerfile
+    container_name: weather_producer
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SIMULATION_INTERVAL_SECONDS: 2.0
+
+  # 4. PySpark Structured Streaming Job
+  spark-job:
+    build:
+      context: .
+      dockerfile: spark/Dockerfile
+    container_name: spark_streaming_job
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DB_HOST: postgres
+
+  # 5. Streamlit Dashboard (Web UI)
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: streamlit_dashboard
+    ports:
+      - "8501:8501"
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+
+  # 6. CLI Consumer (Optional Verification)
+  consumer:
+    build:
+      context: .
+      dockerfile: consumers/Dockerfile
+    container_name: weather_consumer
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092

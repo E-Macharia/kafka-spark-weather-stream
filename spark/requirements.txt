@@ -1,0 +1,2 @@
+# PySpark is pre-installed on the Bitnami base image.
+# No additional python packages are required.
